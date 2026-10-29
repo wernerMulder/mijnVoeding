@@ -1,5 +1,5 @@
 
-const APP_VERSION='1.1.0'; // Verhoog dit nummer bij een nieuwe release
+const APP_VERSION='1.0'; // Verhoog dit nummer bij een nieuwe release
 const TZ='Europe/Amsterdam';
 const iso=d=>new Intl.DateTimeFormat('sv-SE',{timeZone:TZ}).format(d);
 const today=()=>iso(new Date());
