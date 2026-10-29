@@ -1,4 +1,5 @@
 
+const APP_VERSION='1.1.0'; // Verhoog dit nummer bij een nieuwe release
 const TZ='Europe/Amsterdam';
 const iso=d=>new Intl.DateTimeFormat('sv-SE',{timeZone:TZ}).format(d);
 const today=()=>iso(new Date());
@@ -162,7 +163,8 @@ function vSet(){
   const f=(k,l,t)=>`<label>${l}<input data-s="${k}" value="${esc(s[k])}" ${t?'':'inputmode="decimal"'}></label>`;
   return `<h1>Instellingen</h1><div class="card">${f('kcal','Dagelijks kcal-doel')}${f('prot','Dagelijks eiwitdoel (g)')}${f('w','Gewicht (kg)')}${f('h','Lengte (cm)')}${f('age','Leeftijd')}${f('name','Naam van de app',1)}
   <button class="p" data-a="savesets" style="width:100%">Opslaan</button>${msg?`<div class="mut" style="margin-top:8px">${esc(msg)}</div>`:''}</div>
-  <div class="card"><h2>Gegevens</h2><button data-a="export" style="width:100%;margin-bottom:8px">Exporteer back-up (JSON)</button><button data-a="import" style="width:100%;margin-bottom:8px">Importeer back-up</button><button data-a="wipe" style="width:100%;color:var(--over)">Alle gegevens verwijderen</button></div>`
+  <div class="card"><h2>Gegevens</h2><button data-a="export" style="width:100%;margin-bottom:8px">Exporteer back-up (JSON)</button><button data-a="import" style="width:100%;margin-bottom:8px">Importeer back-up</button><button data-a="wipe" style="width:100%;color:var(--over)">Alle gegevens verwijderen</button></div>
+  <div class="card app-info"><h2>Over deze app</h2><div class="mut">Versie <strong>${APP_VERSION}</strong></div></div>`
 }
 
 function render(){
