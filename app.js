@@ -1,5 +1,4 @@
-
-const APP_VERSION='2.1.1'; // Verhoog dit nummer bij een nieuwe release
+const APP_VERSION='2.2.0'; // Verhoog dit nummer bij een nieuwe release
 const TZ='Europe/Amsterdam';
 const iso=d=>new Intl.DateTimeFormat('sv-SE',{timeZone:TZ}).format(d);
 const today=()=>iso(new Date());
@@ -12,8 +11,10 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',
 const uid=()=>Math.random().toString(36).slice(2,10);
 
 const BUILTIN={banaan:[89,1.1],kip:[110,23],kipfilet:[110,23],whey:[400,80],aardappelen:[77,2],aardappel:[77,2],spinazie:[23,2.9],'gemengd gehakt':[250,17],ei:[143,12.6],havermout:[370,13],rijst:[130,2.7]};
-const DEF={s:{kcal:1900,prot:120,w:74.5,h:174,age:34,name:'Mijn Voeding'},days:{},lib:{}};
+// NIEUW: weights:{} (gewicht per datum)
+const DEF={s:{kcal:1900,prot:120,w:74.5,h:174,age:34,name:'Mijn Voeding'},days:{},lib:{},weights:{}};
 let st=JSON.parse(JSON.stringify(DEF)),date=today(),tab='today',msg='',errs=[];
+let wmsg=''; // NIEUW: foutmelding bij gewicht loggen
 
 // Opslag (IndexedDB)
 const db=new Promise((res,rej)=>{try{const r=indexedDB.open('mijnvoeding',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}catch(e){rej(e)}});
@@ -29,6 +30,41 @@ const sportTot=d=>exercisesOf(d).reduce((a,e)=>a+e.kcal,0);
 const dayTot=d=>d.entries.reduce((a,e)=>({k:a.k+e.kcal,p:a.p+e.prot}),{k:0,p:0});
 const ingTot=i=>({k:i.g*i.k/100,p:i.g*i.p/100});
 const mealTot=d=>d.ae.reduce((a,i)=>{const t=ingTot(i);return{k:a.k+t.k,p:a.p+t.p}},{k:0,p:0});
+
+// NIEUW: gewicht en trend
+const wKeys=()=>Object.keys(st.weights).sort();
+const syncWeight=()=>{const k=wKeys();if(k.length)st.s.w=st.weights[k[k.length-1]]};
+function trend(days){
+  const from=addDays(today(),-(days-1)),t0=new Date(from+'T12:00:00Z');
+  const pts=wKeys().filter(k=>k>=from&&k<=today()).map(k=>[(new Date(k+'T12:00:00Z')-t0)/864e5,st.weights[k]]);
+  if(pts.length<4||pts[pts.length-1][0]-pts[0][0]<7)return null;
+  const n=pts.length,mx=pts.reduce((a,p)=>a+p[0],0)/n,my=pts.reduce((a,p)=>a+p[1],0)/n;
+  const sxx=pts.reduce((a,p)=>a+(p[0]-mx)**2,0),sxy=pts.reduce((a,p)=>a+(p[0]-mx)*(p[1]-my),0);
+  const ks=Object.keys(st.days).filter(k=>k>=from&&k<=today()&&st.days[k].entries.length);
+  const intake=ks.length?ks.reduce((a,k)=>a+dayTot(st.days[k]).k,0)/ks.length:null;
+  return{slope:sxy/sxx,n,intake,idays:ks.length}
+}
+function weightCard(){
+  const ks=wKeys();
+  if(!ks.length)return '<div class="card"><h2>Gewicht</h2><div class="mut">Log dagelijks je gewicht op het tabblad Vandaag.</div></div>';
+  const T=today(),from=addDays(T,-29),pts=ks.filter(k=>k>=from).map(k=>[k,st.weights[k]]);
+  const avg=(a,b)=>{const v=ks.filter(k=>k>=a&&k<=b).map(k=>st.weights[k]);return v.length?v.reduce((x,y)=>x+y,0)/v.length:null};
+  const a1=avg(addDays(T,-6),T),a0=avg(addDays(T,-13),addDays(T,-7));
+  let svg='';
+  if(pts.length){
+    const lo=Math.min(...pts.map(p=>p[1]))-.3,hi=Math.max(...pts.map(p=>p[1]))+.3,t0=new Date(from+'T12:00:00Z');
+    const X=k=>(new Date(k+'T12:00:00Z')-t0)/864e5/29*296+2,Y=w=>58-(w-lo)/(hi-lo)*54;
+    svg=`<svg viewBox="0 0 300 60" width="100%" height="60" role="img" aria-label="Gewicht, laatste 30 dagen" style="margin:8px 0"><polyline points="${pts.map(p=>X(p[0]).toFixed(1)+','+Y(p[1]).toFixed(1)).join(' ')}" fill="none" stroke="var(--kc)" stroke-width="2" stroke-linejoin="round"/>${pts.map(p=>`<circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="2.5" fill="var(--kc)"/>`).join('')}</svg>`
+  }
+  const t=trend(14);
+  let est='<div class="mut">Voor een schatting van je werkelijke verbruik zijn in de laatste 14 dagen minstens 4 gewichten (verspreid over 7+ dagen) en 5 dagen met voedsel nodig.</div>';
+  if(t&&t.idays>=5){
+    const exp=t.intake-t.slope*7700;
+    est=`<div>Geschat totaalverbruik: <b>${fmt(Math.round(exp))} kcal/dag</b></div><div class="mut">Gem. inname ${fmt(Math.round(t.intake))} kcal/dag (${t.idays} dagen), gewichtstrend ${fmt(t.slope*7)} kg/week. Indicatie op basis van 1 kg ≈ 7700 kcal; vochtschommelingen en onvolledig loggen vertekenen dit.</div>`
+  }
+  return `<div class="card"><h2>Gewicht</h2><div class="big">${fmt(st.weights[ks[ks.length-1]])} kg <span class="mut">laatste meting</span></div>
+  <div class="mut">7-daags gemiddelde: ${a1!=null?fmt(a1)+' kg':'–'}${a1!=null&&a0!=null?` (${a1-a0>0?'+':''}${fmt(a1-a0)} kg t.o.v. week ervoor)`:''}</div>${svg}${est}</div>`
+}
 
 function parseLine(raw){
   let l=raw.trim().replace(/\s+/g,' ');
@@ -125,6 +161,7 @@ function vToday(){
   ${errs.length?`<div class="err">${errs.map(esc).join('<br>')}<br>Er is niets opgeslagen.</div>`:''}
   <button class="p" data-a="add" style="width:100%;margin-top:8px">Toevoegen</button></div>
   <div class="card"><h2>Sport en verbranding</h2><div class="mut">Geschatte verbranding wordt van je calorieën afgetrokken. Eiwitten blijven gelijk.</div><button class="p" data-a="addsport" style="width:100%;margin-top:8px">Sport toevoegen</button>${exercisesOf(d).length?`<ul>${exercisesOf(d).map(e=>`<li class="e"><div>${esc(e.name)}<div class="mut">${fmt(e.minutes)} min · geschat</div></div><div style="text-align:right"><b>−${fmt(e.kcal)}</b> kcal</div><button class="i" data-a="delsport" data-id="${e.id}" aria-label="Sport verwijderen">✕</button></li>`).join('')}</ul><div class="mut">Totaal sport: −${fmt(sp)} kcal</div>`:'<div class="mut" style="margin-top:8px">Nog geen sport geregistreerd.</div>'}</div>
+  <div class="card"><h2>Gewicht</h2><div class="row sp"><div class="big">${st.weights[date]!=null?fmt(st.weights[date])+' kg':'–'}</div><button class="p" data-a="weight">${st.weights[date]!=null?'Aanpassen':'Gewicht loggen'}</button>${st.weights[date]!=null?'<button class="i" data-a="delweight" aria-label="Gewicht verwijderen">✕</button>':''}</div>${wmsg?`<div class="err">${esc(wmsg)}</div>`:''}</div>
   ${has?`<div class="card"><h2>Avondmaaltijd (ae) · nog niet geteld</h2>
   <div class="big">${fmt(mt.k)} kcal · ${fmt(mt.p)} g eiwit</div>
   <ul>${d.ae.map(i=>{const x=ingTot(i);return `<li class="e"><div>${esc(i.name)}${i.est?' <span class="tag">(geschat)</span>':''}<div class="mut">${fmt(i.g)} g · ${fmt(x.k)} kcal · ${fmt(x.p)} g eiwit</div></div><button class="i" data-a="ied" data-id="${i.id}" aria-label="Aanpassen">✎</button><button class="i" data-a="idel" data-id="${i.id}" aria-label="Verwijderen">✕</button></li>`}).join('')}</ul>
@@ -147,7 +184,7 @@ function vHist(){
     const k=addDays(today(),-i),d=day(k),raw=dayTot(d),net=raw.k-sportTot(d);
     ch.push(`<i title="${k}" style="height:${Math.max(0,Math.min(100,net/st.s.kcal*100))}%${net>st.s.kcal?';background:var(--over)':''}"></i>`)
   }
-  return `<h1>Geschiedenis</h1><div class="card"><h2>Laatste 7 dagen (${act.length} dagen met invoer)</h2>
+  return `<h1>Geschiedenis</h1>${weightCard()}<div class="card"><h2>Laatste 7 dagen (${act.length} dagen met invoer)</h2>
   <div>Gemiddeld <b>${fmt(ak)} kcal</b> (${Math.round(ak/st.s.kcal*100)}%) · <b>${fmt(ap)} g eiwit</b> (${Math.round(ap/st.s.prot*100)}%)</div>
   <div class="ch" aria-label="Kcal per dag, laatste 14 dagen">${ch.join('')}</div><div class="mut">kcal t.o.v. doel, laatste 14 dagen</div></div>
   <div class="card">${rows.length?`<ul>${rows.map(r=>`<li class="e"><button style="flex:1;text-align:left;border:0;background:none" data-a="goto" data-d="${r.k}"><b style="text-transform:capitalize">${fmtDate(r.k)}</b><div class="mut">${fmt(r.t.k)} kcal (${r.pk}%) · ${fmt(r.t.p)} g eiwit (${r.pp}%)</div></button></li>`).join('')}</ul>`:'<div class="mut">Nog geen dagen geregistreerd.</div>'}</div>`
@@ -196,13 +233,13 @@ document.addEventListener('click',async ev=>{
   const a=b.dataset.a;
 
   if(a==='tab'){tab=b.dataset.t;msg='';return render()}
-  if(a==='prev'){date=addDays(date,-1);errs=[];return render()}
-  if(a==='next'){date=addDays(date,1);errs=[];return render()}
-  if(a==='today'){date=today();errs=[];return render()}
+  if(a==='prev'){date=addDays(date,-1);errs=[];wmsg='';return render()}
+  if(a==='next'){date=addDays(date,1);errs=[];wmsg='';return render()}
+  if(a==='today'){date=today();errs=[];wmsg='';return render()}
   if(a==='newday'){
     const ks=Object.keys(st.days).filter(k=>st.days[k].entries.length||st.days[k].ae.length).sort();
     const last=ks.length?ks[ks.length-1]:null;
-    date=last&&last>=today()?addDays(last,1):today();errs=[];return render()
+    date=last&&last>=today()?addDays(last,1):today();errs=[];wmsg='';return render()
   }
   if(a==='goto'){date=b.dataset.d;tab='today';return render()}
   if(a==='add'){const ta=document.getElementById('in');if(addInput(ta.value))ta.value='';return render()}
@@ -229,6 +266,24 @@ document.addEventListener('click',async ev=>{
   if(a==='delsport'){
     const w=wd(date);
     w.exercises=exercisesOf(w).filter(e=>e.id!==b.dataset.id);
+    return done()
+  }
+
+  // NIEUW: gewicht loggen, aanpassen en verwijderen
+  if(a==='weight'){
+    const cur=st.weights[date]!=null?st.weights[date]:st.s.w;
+    const v=await ask('Gewicht op '+fmtDate(date),[['Gewicht (kg)',fmt(cur)]]);
+    if(!v)return;
+    const w=num(v[0]);
+    if(!(w>20&&w<400)){wmsg='Vul een realistisch gewicht in (kg).';return render()}
+    st.weights[date]=Math.round(w*10)/10;
+    wmsg='';syncWeight();
+    return done()
+  }
+
+  if(a==='delweight'){
+    delete st.weights[date];
+    wmsg='';syncWeight();
     return done()
   }
 
@@ -318,7 +373,8 @@ document.addEventListener('click',async ev=>{
     try{
       const j=JSON.parse(t),x=j.data||j;
       if(!x.s||!x.days||!x.lib)throw 0;
-      st=x;msg='Back-up teruggezet.';
+      st=x;st.weights=st.weights||{}; // NIEUW: oude back-ups zonder gewichten
+      msg='Back-up teruggezet.';
       return done()
     }catch(e){
       msg='Ongeldige back-up: niets gewijzigd.';
@@ -339,7 +395,7 @@ document.addEventListener('click',async ev=>{
 (async()=>{
   try{
     const s=await idbGet('state');
-    if(s&&s.s)st=s
+    if(s&&s.s){st=s;st.weights=st.weights||{}} // NIEUW: bestaande data krijgt een gewichtenlijst
   }catch(e){}
   render()
 })();
