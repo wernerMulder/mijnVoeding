@@ -1,4 +1,4 @@
-const APP_VERSION='2.2.0'; // Verhoog dit nummer bij een nieuwe release
+const APP_VERSION='2.3.0'; // Verhoog dit nummer bij een nieuwe release
 const TZ='Europe/Amsterdam';
 const iso=d=>new Intl.DateTimeFormat('sv-SE',{timeZone:TZ}).format(d);
 const today=()=>iso(new Date());
@@ -34,15 +34,34 @@ const mealTot=d=>d.ae.reduce((a,i)=>{const t=ingTot(i);return{k:a.k+t.k,p:a.p+t.
 // NIEUW: gewicht en trend
 const wKeys=()=>Object.keys(st.weights).sort();
 const syncWeight=()=>{const k=wKeys();if(k.length)st.s.w=st.weights[k[k.length-1]]};
-function trend(days){
-  const from=addDays(today(),-(days-1)),t0=new Date(from+'T12:00:00Z');
-  const pts=wKeys().filter(k=>k>=from&&k<=today()).map(k=>[(new Date(k+'T12:00:00Z')-t0)/864e5,st.weights[k]]);
-  if(pts.length<4||pts[pts.length-1][0]-pts[0][0]<7)return null;
+function trend(days,end=today()){
+  const from=addDays(end,-(days-1)),t0=new Date(from+'T12:00:00Z');
+  const pts=wKeys().filter(k=>k>=from&&k<=end).map(k=>[(new Date(k+'T12:00:00Z')-t0)/864e5,st.weights[k]]);
+  if(pts.length<8||pts[pts.length-1][0]-pts[0][0]<14)return null;
   const n=pts.length,mx=pts.reduce((a,p)=>a+p[0],0)/n,my=pts.reduce((a,p)=>a+p[1],0)/n;
   const sxx=pts.reduce((a,p)=>a+(p[0]-mx)**2,0),sxy=pts.reduce((a,p)=>a+(p[0]-mx)*(p[1]-my),0);
-  const ks=Object.keys(st.days).filter(k=>k>=from&&k<=today()&&st.days[k].entries.length);
+  const ks=Object.keys(st.days).filter(k=>k>=from&&k<=end&&st.days[k].entries.length);
   const intake=ks.length?ks.reduce((a,k)=>a+dayTot(st.days[k]).k,0)/ks.length:null;
   return{slope:sxy/sxx,n,intake,idays:ks.length}
+}
+// NIEUW: geschat totaalverbruik over de 28 dagen tot en met 'end'
+function burnEst(end){
+  const t=trend(28,end);
+  if(!t||t.idays<10)return null;
+  return{...t,exp:t.intake-t.slope*7700}
+}
+// NIEUW: een waarde per week (t/m zondag), tot 12 weken terug
+const fmtShort=s=>new Intl.DateTimeFormat('nl-NL',{timeZone:'UTC',day:'numeric',month:'short'}).format(new Date(s+'T12:00:00Z'));
+function weeklyBurn(){
+  const T=today(),sun=addDays(T,-new Date(T+'T12:00:00Z').getUTCDay()),rows=[];
+  for(let i=0;i<12;i++){const end=addDays(sun,-7*i),e=burnEst(end);if(e)rows.push({end,...e})}
+  return rows
+}
+function weeklyCard(){
+  const r=weeklyBurn();
+  if(!r.length)return '';
+  const max=Math.max(...r.map(x=>x.exp));
+  return `<div class="card"><h2>Verbruik per week</h2><div class="mut">Geschat totaalverbruik per week (zondag), telkens over de 28 dagen daarvoor. Verandert mee als je gewichten of eten aanpast.</div><ul>${r.map(x=>`<li class="e"><div><b>t/m ${fmtShort(x.end)}</b><div class="bar"><i style="width:${Math.round(x.exp/max*100)}%;background:var(--kc)"></i></div><div class="mut">inname ${fmt(Math.round(x.intake))} kcal · trend ${fmt(x.slope*7)} kg/week</div></div><div style="text-align:right"><b>${fmt(Math.round(x.exp))}</b> kcal/dag</div></li>`).join('')}</ul></div>`
 }
 function weightCard(){
   const ks=wKeys();
@@ -56,11 +75,10 @@ function weightCard(){
     const X=k=>(new Date(k+'T12:00:00Z')-t0)/864e5/29*296+2,Y=w=>58-(w-lo)/(hi-lo)*54;
     svg=`<svg viewBox="0 0 300 60" width="100%" height="60" role="img" aria-label="Gewicht, laatste 30 dagen" style="margin:8px 0"><polyline points="${pts.map(p=>X(p[0]).toFixed(1)+','+Y(p[1]).toFixed(1)).join(' ')}" fill="none" stroke="var(--kc)" stroke-width="2" stroke-linejoin="round"/>${pts.map(p=>`<circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="2.5" fill="var(--kc)"/>`).join('')}</svg>`
   }
-  const t=trend(14);
-  let est='<div class="mut">Voor een schatting van je werkelijke verbruik zijn in de laatste 14 dagen minstens 4 gewichten (verspreid over 7+ dagen) en 5 dagen met voedsel nodig.</div>';
-  if(t&&t.idays>=5){
-    const exp=t.intake-t.slope*7700;
-    est=`<div>Geschat totaalverbruik: <b>${fmt(Math.round(exp))} kcal/dag</b></div><div class="mut">Gem. inname ${fmt(Math.round(t.intake))} kcal/dag (${t.idays} dagen), gewichtstrend ${fmt(t.slope*7)} kg/week. Indicatie op basis van 1 kg ≈ 7700 kcal; vochtschommelingen en onvolledig loggen vertekenen dit.</div>`
+  const t=burnEst(T);
+  let est='<div class="mut">Voor een schatting van je werkelijke verbruik zijn in de laatste 28 dagen minstens 8 gewichten (verspreid over 14+ dagen) en 10 dagen met voedsel nodig.</div>';
+  if(t){
+    est=`<div>Geschat totaalverbruik: <b>${fmt(Math.round(t.exp))} kcal/dag</b> <span class="mut">(laatste 28 dagen)</span></div><div class="mut">Gem. inname ${fmt(Math.round(t.intake))} kcal/dag (${t.idays} dagen), gewichtstrend ${fmt(t.slope*7)} kg/week. Indicatie op basis van 1 kg ≈ 7700 kcal; vochtschommelingen en onvolledig loggen vertekenen dit.</div>`
   }
   return `<div class="card"><h2>Gewicht</h2><div class="big">${fmt(st.weights[ks[ks.length-1]])} kg <span class="mut">laatste meting</span></div>
   <div class="mut">7-daags gemiddelde: ${a1!=null?fmt(a1)+' kg':'–'}${a1!=null&&a0!=null?` (${a1-a0>0?'+':''}${fmt(a1-a0)} kg t.o.v. week ervoor)`:''}</div>${svg}${est}</div>`
@@ -184,7 +202,7 @@ function vHist(){
     const k=addDays(today(),-i),d=day(k),raw=dayTot(d),net=raw.k-sportTot(d);
     ch.push(`<i title="${k}" style="height:${Math.max(0,Math.min(100,net/st.s.kcal*100))}%${net>st.s.kcal?';background:var(--over)':''}"></i>`)
   }
-  return `<h1>Geschiedenis</h1>${weightCard()}<div class="card"><h2>Laatste 7 dagen (${act.length} dagen met invoer)</h2>
+  return `<h1>Geschiedenis</h1>${weightCard()}${weeklyCard()}<div class="card"><h2>Laatste 7 dagen (${act.length} dagen met invoer)</h2>
   <div>Gemiddeld <b>${fmt(ak)} kcal</b> (${Math.round(ak/st.s.kcal*100)}%) · <b>${fmt(ap)} g eiwit</b> (${Math.round(ap/st.s.prot*100)}%)</div>
   <div class="ch" aria-label="Kcal per dag, laatste 14 dagen">${ch.join('')}</div><div class="mut">kcal t.o.v. doel, laatste 14 dagen</div></div>
   <div class="card">${rows.length?`<ul>${rows.map(r=>`<li class="e"><button style="flex:1;text-align:left;border:0;background:none" data-a="goto" data-d="${r.k}"><b style="text-transform:capitalize">${fmtDate(r.k)}</b><div class="mut">${fmt(r.t.k)} kcal (${r.pk}%) · ${fmt(r.t.p)} g eiwit (${r.pp}%)</div></button></li>`).join('')}</ul>`:'<div class="mut">Nog geen dagen geregistreerd.</div>'}</div>`
