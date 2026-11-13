@@ -284,3 +284,19 @@ nav button.on {
 .fav {
   color: #c98a00;
 }
+
+select {
+  font: inherit;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+select:focus-visible {
+  outline: 3px solid var(--kc);
+  outline-offset: 1px;
+}
