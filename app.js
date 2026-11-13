@@ -1,4 +1,4 @@
-const APP_VERSION='2.3.0'; // Verhoog dit nummer bij een nieuwe release
+const APP_VERSION='2.3.1'; // Verhoog dit nummer bij een nieuwe release
 const TZ='Europe/Amsterdam';
 const iso=d=>new Intl.DateTimeFormat('sv-SE',{timeZone:TZ}).format(d);
 const today=()=>iso(new Date());
@@ -152,7 +152,7 @@ function addInput(text){
 function ask(title,fields,ok='Opslaan'){
   return new Promise(res=>{
     const o=document.createElement('div');o.className='ov';
-    o.innerHTML=`<form class="card"><h2>${title}</h2>${fields.map((f,i)=>`<label>${f[0]}<input name="f${i}" value="${esc(f[1])}" ${f[2]?'':'inputmode="decimal"'}></label>`).join('')}<div class="row"><button type="button" class="c">Annuleer</button><button class="p">${ok}</button></div></form>`;
+    o.innerHTML=`<form class="card"><h2>${title}</h2>${fields.map((f,i)=>`<label>${f[0]}${f[3]?`<select name="f${i}">${f[3].map(o=>`<option${o===f[1]?' selected':''}>${esc(o)}</option>`).join('')}</select>`:`<input name="f${i}" value="${esc(f[1])}" ${f[2]?'':'inputmode="decimal"'}>`}</label>`).join('')}<div class="row"><button type="button" class="c">Annuleer</button><button class="p">${ok}</button></div></form>`;
     document.body.appendChild(o);
     const f=o.querySelector('form'),first=f.querySelector('input');
     first&&first.focus();
@@ -265,7 +265,7 @@ document.addEventListener('click',async ev=>{
 
   if(a==='addsport'){
     const v=await ask('Sport toevoegen',[
-      ['Activiteit (HIIT, Krachttraining, Krav Maga, Wandelen of Fietsen)','HIIT',1],
+      ['Activiteit','HIIT',1,Object.keys(exerciseKcalPerMinute)],
       ['Duur in minuten','20']
     ],'Toevoegen');
     if(!v)return;
