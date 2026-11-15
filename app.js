@@ -1,4 +1,4 @@
-const APP_VERSION='2.3.1'; // Verhoog dit nummer bij een nieuwe release
+const APP_VERSION='2.4.0'; // Verhoog dit nummer bij een nieuwe release
 const TZ='Europe/Amsterdam';
 const iso=d=>new Intl.DateTimeFormat('sv-SE',{timeZone:TZ}).format(d);
 const today=()=>iso(new Date());
@@ -42,13 +42,16 @@ function trend(days,end=today()){
   const sxx=pts.reduce((a,p)=>a+(p[0]-mx)**2,0),sxy=pts.reduce((a,p)=>a+(p[0]-mx)*(p[1]-my),0);
   const ks=Object.keys(st.days).filter(k=>k>=from&&k<=end&&st.days[k].entries.length);
   const intake=ks.length?ks.reduce((a,k)=>a+dayTot(st.days[k]).k,0)/ks.length:null;
-  return{slope:sxy/sxx,n,intake,idays:ks.length}
+  return{slope:sxy/sxx,n,intake,idays:ks.length,ks}
 }
 // NIEUW: geschat totaalverbruik over de 28 dagen tot en met 'end'
 function burnEst(end){
   const t=trend(28,end);
   if(!t||t.idays<10)return null;
-  return{...t,exp:t.intake-t.slope*7700}
+  const exp=t.intake-t.slope*7700;
+  // NIEUW: gemiddeld gelogde sport (zelfde dagen als de inname) eraf = 'normaal' verbruik
+  const sport=t.ks.reduce((a,k)=>a+sportTot(st.days[k]),0)/t.ks.length;
+  return{...t,exp,sport,base:exp-sport}
 }
 // NIEUW: een waarde per week (t/m zondag), tot 12 weken terug
 const fmtShort=s=>new Intl.DateTimeFormat('nl-NL',{timeZone:'UTC',day:'numeric',month:'short'}).format(new Date(s+'T12:00:00Z'));
@@ -60,8 +63,8 @@ function weeklyBurn(){
 function weeklyCard(){
   const r=weeklyBurn();
   if(!r.length)return '';
-  const max=Math.max(...r.map(x=>x.exp));
-  return `<div class="card"><h2>Verbruik per week</h2><div class="mut">Geschat totaalverbruik per week (zondag), telkens over de 28 dagen daarvoor. Verandert mee als je gewichten of eten aanpast.</div><ul>${r.map(x=>`<li class="e"><div><b>t/m ${fmtShort(x.end)}</b><div class="bar"><i style="width:${Math.round(x.exp/max*100)}%;background:var(--kc)"></i></div><div class="mut">inname ${fmt(Math.round(x.intake))} kcal · trend ${fmt(x.slope*7)} kg/week</div></div><div style="text-align:right"><b>${fmt(Math.round(x.exp))}</b> kcal/dag</div></li>`).join('')}</ul></div>`
+  const max=Math.max(...r.map(x=>x.base));
+  return `<div class="card"><h2>Verbruik per week</h2><div class="mut">Geschat normaal verbruik (totaal minus gelogde sport) per week (zondag), telkens over de 28 dagen daarvoor. Verandert mee als je gewichten of eten aanpast.</div><ul>${r.map(x=>`<li class="e"><div><b>t/m ${fmtShort(x.end)}</b><div class="bar"><i style="width:${Math.round(x.base/max*100)}%;background:var(--kc)"></i></div><div class="mut">totaal ${fmt(Math.round(x.exp))} − gelogde sport ${fmt(Math.round(x.sport))} · inname ${fmt(Math.round(x.intake))} · trend ${fmt(x.slope*7)} kg/week</div></div><div style="text-align:right"><b>${fmt(Math.round(x.base))}</b> kcal/dag</div></li>`).join('')}</ul></div>`
 }
 function weightCard(){
   const ks=wKeys();
@@ -78,7 +81,7 @@ function weightCard(){
   const t=burnEst(T);
   let est='<div class="mut">Voor een schatting van je werkelijke verbruik zijn in de laatste 28 dagen minstens 8 gewichten (verspreid over 14+ dagen) en 10 dagen met voedsel nodig.</div>';
   if(t){
-    est=`<div>Geschat totaalverbruik: <b>${fmt(Math.round(t.exp))} kcal/dag</b> <span class="mut">(laatste 28 dagen)</span></div><div class="mut">Gem. inname ${fmt(Math.round(t.intake))} kcal/dag (${t.idays} dagen), gewichtstrend ${fmt(t.slope*7)} kg/week. Indicatie op basis van 1 kg ≈ 7700 kcal; vochtschommelingen en onvolledig loggen vertekenen dit.</div>`
+    est=`<div>Normaal verbruik: <b>${fmt(Math.round(t.base))} kcal/dag</b> <span class="mut">(laatste 28 dagen)</span></div><div class="mut">Totaalverbruik ${fmt(Math.round(t.exp))} kcal/dag − gemiddeld gelogde sport ${fmt(Math.round(t.sport))} kcal/dag.</div><div class="mut">Gem. inname ${fmt(Math.round(t.intake))} kcal/dag (${t.idays} dagen), gewichtstrend ${fmt(t.slope*7)} kg/week. Indicatie op basis van 1 kg ≈ 7700 kcal; vochtschommelingen en onvolledig loggen vertekenen dit.</div>`
   }
   return `<div class="card"><h2>Gewicht</h2><div class="big">${fmt(st.weights[ks[ks.length-1]])} kg <span class="mut">laatste meting</span></div>
   <div class="mut">7-daags gemiddelde: ${a1!=null?fmt(a1)+' kg':'–'}${a1!=null&&a0!=null?` (${a1-a0>0?'+':''}${fmt(a1-a0)} kg t.o.v. week ervoor)`:''}</div>${svg}${est}</div>`
