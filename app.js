@@ -1,4 +1,4 @@
-const APP_VERSION='2.4.0'; // Verhoog dit nummer bij een nieuwe release
+const APP_VERSION='2.5.0'; // Verhoog dit nummer bij een nieuwe release
 const TZ='Europe/Amsterdam';
 const iso=d=>new Intl.DateTimeFormat('sv-SE',{timeZone:TZ}).format(d);
 const today=()=>iso(new Date());
@@ -12,9 +12,10 @@ const uid=()=>Math.random().toString(36).slice(2,10);
 
 const BUILTIN={banaan:[89,1.1],kip:[110,23],kipfilet:[110,23],whey:[400,80],aardappelen:[77,2],aardappel:[77,2],spinazie:[23,2.9],'gemengd gehakt':[250,17],ei:[143,12.6],havermout:[370,13],rijst:[130,2.7]};
 // NIEUW: weights:{} (gewicht per datum)
-const DEF={s:{kcal:1900,prot:120,w:74.5,h:174,age:34,name:'Mijn Voeding'},days:{},lib:{},weights:{}};
+const DEF={s:{kcal:1900,prot:120,w:74.5,h:174,age:34,name:'Mijn Voeding'},days:{},lib:{},weights:{},meas:{}};
 let st=JSON.parse(JSON.stringify(DEF)),date=today(),tab='today',msg='',errs=[];
 let wmsg=''; // NIEUW: foutmelding bij gewicht loggen
+let mmsg=''; // NIEUW: foutmelding bij omtrekken loggen
 
 // Opslag (IndexedDB)
 const db=new Promise((res,rej)=>{try{const r=indexedDB.open('mijnvoeding',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}catch(e){rej(e)}});
@@ -65,6 +66,42 @@ function weeklyCard(){
   if(!r.length)return '';
   const max=Math.max(...r.map(x=>x.base));
   return `<div class="card"><h2>Verbruik per week</h2><div class="mut">Geschat normaal verbruik (totaal minus gelogde sport) per week (zondag), telkens over de 28 dagen daarvoor. Verandert mee als je gewichten of eten aanpast.</div><ul>${r.map(x=>`<li class="e"><div><b>t/m ${fmtShort(x.end)}</b><div class="bar"><i style="width:${Math.round(x.base/max*100)}%;background:var(--kc)"></i></div><div class="mut">totaal ${fmt(Math.round(x.exp))} − gelogde sport ${fmt(Math.round(x.sport))} · inname ${fmt(Math.round(x.intake))} · trend ${fmt(x.slope*7)} kg/week</div></div><div style="text-align:right"><b>${fmt(Math.round(x.base))}</b> kcal/dag</div></li>`).join('')}</ul></div>`
+}
+// NIEUW: omtrekken (cm), één meting per week
+const MEAS=[['taille','Taille'],['arm','Bovenarm'],['been','Bovenbeen']];
+const measDates=()=>Object.keys(st.meas).sort();
+const measDue=()=>{const k=measDates(),l=k[k.length-1];return !l||l<=addDays(today(),-7)};
+const sg=n=>(n>0?'+':'')+fmt(n);
+const spark=v=>{if(v.length<2)return '';const lo=Math.min(...v),hi=Math.max(...v),r=hi-lo||1;return `<svg viewBox="0 0 100 24" width="90" height="24" aria-hidden="true"><polyline points="${v.map((x,i)=>(i/(v.length-1)*98+1).toFixed(1)+','+(22-(x-lo)/r*20).toFixed(1)).join(' ')}" fill="none" stroke="var(--kc)" stroke-width="2" stroke-linejoin="round"/></svg>`};
+function measDelta(key){ // laatste waarde en verschil t.o.v. ongeveer 4 weken eerder
+  const ks=measDates().filter(d=>st.meas[d][key]!=null);
+  if(!ks.length)return null;
+  const L=ks[ks.length-1],target=new Date(addDays(L,-28)+'T12:00:00Z');
+  const cand=ks.filter(d=>d<=addDays(L,-21)&&d>=addDays(L,-35)).sort((a,b)=>Math.abs(new Date(a+'T12:00:00Z')-target)-Math.abs(new Date(b+'T12:00:00Z')-target));
+  return{v:st.meas[L][key],d:cand.length?st.meas[L][key]-st.meas[cand[0]][key]:null}
+}
+function measDueCard(){
+  if(date!==today()||!measDue())return '';
+  const k=measDates(),l=k[k.length-1];
+  return `<div class="card"><h2>Wekelijkse meting</h2><div class="mut">${l?'Je laatste meting was op '+fmtDate(l)+'.':'Je hebt nog geen omtrekken gelogd.'} Meet ’s ochtends, ontspannen, op dezelfde plek.</div>${mmsg?`<div class="err">${esc(mmsg)}</div>`:''}<button class="p" data-a="meas" data-d="${today()}" style="width:100%;margin-top:8px">Meting loggen</button></div>`
+}
+function measCard(){
+  const ds=measDates(),err=mmsg?`<div class="err">${esc(mmsg)}</div>`:'';
+  const add=`<button class="p" data-a="meas" data-d="${today()}" style="width:100%;margin-top:8px">Meting loggen</button>`;
+  if(!ds.length)return `<div class="card"><h2>Omtrekken</h2><div class="mut">Meet één keer per week je taille, bovenarm en bovenbeen (in cm). De app toont dan de verandering over ongeveer 4 weken.</div>${err}${add}</div>`;
+  const rows=MEAS.map(([k,l])=>{
+    const x=measDelta(k);if(!x)return '';
+    const vals=ds.filter(d=>st.meas[d][k]!=null).slice(-12).map(d=>st.meas[d][k]);
+    return `<li class="e"><div><b>${l}</b><div class="mut">${x.d==null?'nog geen vergelijking (± 4 weken data nodig)':sg(x.d)+' cm t.o.v. ± 4 weken eerder'}</div></div>${spark(vals)}<div style="text-align:right;min-width:64px"><b>${fmt(x.v)}</b> cm</div></li>`
+  }).join('');
+  const dT=measDelta('taille'),mus=[measDelta('arm'),measDelta('been')].filter(x=>x&&x.d!=null).map(x=>x.d);
+  let hint='';
+  if(dT&&dT.d!=null&&mus.length){
+    if(dT.d<=-.5&&mus.every(x=>x>=-.3))hint='Je taille daalt terwijl je spiermaten gelijk blijven of stijgen: dat past bij vetverlies met behoud van spier.';
+    else if(dT.d<=-.5&&mus.every(x=>x<=-.5))hint='Ook je spiermaten dalen: mogelijk verlies je ook spier. Overweeg een kleiner tekort, voldoende eiwit en zwaardere training.'
+  }
+  return `<div class="card"><h2>Omtrekken</h2><ul>${rows}</ul>${hint?`<div style="margin-top:8px">${hint}</div>`:''}<div class="mut" style="margin-top:8px">Verschillen onder ± 0,5 cm zijn meetruis.</div>
+  <h2 style="margin-top:14px">Metingen</h2><ul>${ds.slice().reverse().slice(0,8).map(d=>`<li class="e"><div><b>${fmtShort(d)}</b><div class="mut">${MEAS.filter(([k])=>st.meas[d][k]!=null).map(([k,l])=>l+' '+fmt(st.meas[d][k])).join(' · ')}</div></div><button class="i" data-a="meas" data-d="${d}" aria-label="Meting aanpassen">✎</button><button class="i" data-a="delmeas" data-d="${d}" aria-label="Meting verwijderen">✕</button></li>`).join('')}</ul>${err}${add}</div>`
 }
 function weightCard(){
   const ks=wKeys();
@@ -182,6 +219,7 @@ function vToday(){
   ${errs.length?`<div class="err">${errs.map(esc).join('<br>')}<br>Er is niets opgeslagen.</div>`:''}
   <button class="p" data-a="add" style="width:100%;margin-top:8px">Toevoegen</button></div>
   <div class="card"><h2>Sport en verbranding</h2><div class="mut">Geschatte verbranding wordt van je calorieën afgetrokken. Eiwitten blijven gelijk.</div><button class="p" data-a="addsport" style="width:100%;margin-top:8px">Sport toevoegen</button>${exercisesOf(d).length?`<ul>${exercisesOf(d).map(e=>`<li class="e"><div>${esc(e.name)}<div class="mut">${fmt(e.minutes)} min · geschat</div></div><div style="text-align:right"><b>−${fmt(e.kcal)}</b> kcal</div><button class="i" data-a="delsport" data-id="${e.id}" aria-label="Sport verwijderen">✕</button></li>`).join('')}</ul><div class="mut">Totaal sport: −${fmt(sp)} kcal</div>`:'<div class="mut" style="margin-top:8px">Nog geen sport geregistreerd.</div>'}</div>
+  ${measDueCard()}
   <div class="card"><h2>Gewicht</h2><div class="row sp"><div class="big">${st.weights[date]!=null?fmt(st.weights[date])+' kg':'–'}</div><button class="p" data-a="weight">${st.weights[date]!=null?'Aanpassen':'Gewicht loggen'}</button>${st.weights[date]!=null?'<button class="i" data-a="delweight" aria-label="Gewicht verwijderen">✕</button>':''}</div>${wmsg?`<div class="err">${esc(wmsg)}</div>`:''}</div>
   ${has?`<div class="card"><h2>Avondmaaltijd (ae) · nog niet geteld</h2>
   <div class="big">${fmt(mt.k)} kcal · ${fmt(mt.p)} g eiwit</div>
@@ -205,7 +243,7 @@ function vHist(){
     const k=addDays(today(),-i),d=day(k),raw=dayTot(d),net=raw.k-sportTot(d);
     ch.push(`<i title="${k}" style="height:${Math.max(0,Math.min(100,net/st.s.kcal*100))}%${net>st.s.kcal?';background:var(--over)':''}"></i>`)
   }
-  return `<h1>Geschiedenis</h1>${weightCard()}${weeklyCard()}<div class="card"><h2>Laatste 7 dagen (${act.length} dagen met invoer)</h2>
+  return `<h1>Geschiedenis</h1>${weightCard()}${weeklyCard()}${measCard()}<div class="card"><h2>Laatste 7 dagen (${act.length} dagen met invoer)</h2>
   <div>Gemiddeld <b>${fmt(ak)} kcal</b> (${Math.round(ak/st.s.kcal*100)}%) · <b>${fmt(ap)} g eiwit</b> (${Math.round(ap/st.s.prot*100)}%)</div>
   <div class="ch" aria-label="Kcal per dag, laatste 14 dagen">${ch.join('')}</div><div class="mut">kcal t.o.v. doel, laatste 14 dagen</div></div>
   <div class="card">${rows.length?`<ul>${rows.map(r=>`<li class="e"><button style="flex:1;text-align:left;border:0;background:none" data-a="goto" data-d="${r.k}"><b style="text-transform:capitalize">${fmtDate(r.k)}</b><div class="mut">${fmt(r.t.k)} kcal (${r.pk}%) · ${fmt(r.t.p)} g eiwit (${r.pp}%)</div></button></li>`).join('')}</ul>`:'<div class="mut">Nog geen dagen geregistreerd.</div>'}</div>`
@@ -308,6 +346,23 @@ document.addEventListener('click',async ev=>{
     return done()
   }
 
+  // NIEUW: omtrekken loggen, aanpassen en verwijderen
+  if(a==='meas'){
+    const d=b.dataset.d||today(),cur=st.meas[d]||{};
+    const v=await ask('Meting '+fmtDate(d),MEAS.map(([k,l])=>[l+' (cm, leeg = overslaan)',cur[k]!=null?fmt(cur[k]):'']));
+    if(!v)return;
+    const o={};let ok=true;
+    MEAS.forEach(([k],i)=>{const t=v[i].trim();if(!t)return;const n=num(t);if(!(n>=10&&n<=300))ok=false;else o[k]=Math.round(n*10)/10});
+    if(!ok||!Object.keys(o).length){mmsg='Vul minstens één maat in, tussen 10 en 300 cm.';return render()}
+    st.meas[d]=o;mmsg='';
+    return done()
+  }
+
+  if(a==='delmeas'){
+    delete st.meas[b.dataset.d];mmsg='';
+    return done()
+  }
+
   if(a==='del'){
     const w=wd(date);
     w.entries=w.entries.filter(e=>e.id!==b.dataset.id);
@@ -394,7 +449,7 @@ document.addEventListener('click',async ev=>{
     try{
       const j=JSON.parse(t),x=j.data||j;
       if(!x.s||!x.days||!x.lib)throw 0;
-      st=x;st.weights=st.weights||{}; // NIEUW: oude back-ups zonder gewichten
+      st=x;st.weights=st.weights||{};st.meas=st.meas||{}; // NIEUW: oude back-ups zonder gewichten
       msg='Back-up teruggezet.';
       return done()
     }catch(e){
@@ -416,7 +471,7 @@ document.addEventListener('click',async ev=>{
 (async()=>{
   try{
     const s=await idbGet('state');
-    if(s&&s.s){st=s;st.weights=st.weights||{}} // NIEUW: bestaande data krijgt een gewichtenlijst
+    if(s&&s.s){st=s;st.weights=st.weights||{};st.meas=st.meas||{}} // NIEUW: bestaande data krijgt een gewichtenlijst
   }catch(e){}
   render()
 })();
